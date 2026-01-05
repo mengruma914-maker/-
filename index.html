@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GuardAI - Protective Gear Design Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0f172a;
+      color: #f8fafc;
+      margin: 0;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #1e293b;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 2px;
+    }
+    @keyframes loading-bar {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(250%); }
+    }
+    .animate-loading-bar {
+        animation: loading-bar 2s ease-in-out infinite;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@19.0.0",
+      "react-dom": "https://esm.sh/react-dom@19.0.0",
+      "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+      "@google/genai": "https://esm.sh/@google/genai@1.3.0",
+      "lucide-react": "https://esm.sh/lucide-react@0.460.0"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="module">
+    import React, { useState, useRef, useEffect, useCallback } from 'react';
+    import ReactDOM from 'react-dom/client';
+    import { GoogleGenAI, Type } from "@google/genai";
+    import { 
+      Activity, Shield, Box, Palette, Image as ImageIcon, 
+      Zap, Layers, Sparkles, Upload, History, ChevronRight, 
+      Trash2, Download, CheckCircle2, Info, X
+    } from 'lucide-react';
+
+    // --- ENUMS & CONSTANTS ---
+    const GearCategory = {
+      KNEE: 'Knee Pad',
+      WRIST: 'Wrist Guard',
+      WAIST: 'Waist Support',
+      ELBOW: 'Elbow Pad',
+      ANKLE: 'Ankle Support'
+    };
+
+    const DesignStyle = {
+      PROFESSIONAL: 'Sport Professional',
+      MEDICAL: 'Medical Rehab',
+      TRENDY: 'Fashion Street',
+      FUTURISTIC: 'Geometric/Futuristic'
+    };
+
+    const MaterialType = {
+      CARBON_FIBER: 'Carbon Fiber',
+      SILICONE: 'Medical Silicone',
+      LEATHER: 'Premium Leather',
+      ELASTIC_MESH: 'Breathable Elastic',
+      HARD_SHELL: 'Polycabonate Shell'
+    };
+
+    const Scenario = {
+      STUDIO: 'Clean Studio',
+      GYM: 'Modern Gym',
+      BASKETBALL: 'Urban Basketball Court',
+      CLINIC: 'Rehab Center',
+      STREET: 'City Street'
+    };
+
+    // --- AI SERVICES ---
+    const getAiClient = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+    const analyzeGearImage = async (base64Image) => {
+      const ai = getAiClient();
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: {
+          parts: [
+            { inlineData: { data: base64Image, mimeType: 'image/jpeg' } },
+            { text: 'Analyze this protective gear image. Identify its category, functional regions, and key design elements. Provide a JSON response with category name (must be one of: Knee Pad, Wrist Guard, Waist Support, Elbow Pad, Ankle Support), detailed analysis text, and normalized coordinates (0-1) for keypoints like joints, straps, and protective padding.' }
+          ]
+        },
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              category: { type: Type.STRING },
+              analysis: { type: Type.STRING },
+              keypoints: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    x: { type: Type.NUMBER },
+                    y: { type: Type.NUMBER },
+                    label: { type: Type.STRING },
+                    type: { type: Type.STRING, enum: ['joint', 'strap', 'pad'] }
+                  }
+                }
+              }
+            },
+            required: ['category', 'analysis', 'keypoints']
+          }
+        }
+      });
+      return JSON.parse(response.text);
+    };
+
+    const generateDesignVariant = async (baseImage, config) => {
+      const ai = getAiClient();
+      const prompt = `Professional product design variant for this ${config.category}. 
+        Desired Style: ${config.style}. 
+        Materials to use: Primary material should be ${config.material}.
+        Colors: Main body color ${config.mainColor}, accent details in ${config.accentColor}.
+        Environmental Setting: Place the product in a ${config.scenario} background with realistic cinematic lighting.
+        Design Rules: Preserve the essential functional structure, straps, and joints of the original gear. Enhance aesthetics with high-end industrial design finishes, refined textures, and clear brand positioning. ${config.style === 'Geometric/Futuristic' ? 'Incorporate sharp angles and faceted surfaces.' : 'Incorporate smooth ergonomic curves and advanced breathable textiles.'}`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+          parts: [
+            { inlineData: { data: baseImage, mimeType: 'image/jpeg' } },
+            { text: prompt }
+          ]
+        }
+      });
+
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData) {
+          return `data:image/png;base64,${part.inlineData.data}`;
+        }
+      }
+      return null;
+    };
+
+    // --- UI COMPONENTS ---
+
+    const Sidebar = ({ state, setState, onGenerate, isLoading }) => {
+      return (
+        <aside className="w-80 h-full bg-slate-900 border-r border-slate-800 flex flex-col custom-scrollbar overflow-y-auto">
+          <div className="p-6 border-b border-slate-800">
+            <h1 className="text-xl font-bold flex items-center gap-2 text-indigo-400">
+              <Shield className="w-6 h-6" />
+              GuardAI Studio
+            </h1>
+            <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-[0.2em] font-semibold">Pro Protective Designer</p>
+          </div>
+
+          <div className="p-6 space-y-8 flex-1">
+            <section className="space-y-3">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <Box className="w-3.5 h-3.5" /> Product Category
+              </label>
+              <div className="grid grid-cols-1 gap-1.5">
+                {Object.values(GearCategory).map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setState({ ...state, category: cat })}
+                    className={`text-left px-3 py-2 rounded-lg text-sm transition-all duration-200 ${
+                      state.category === cat 
+                      ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/40 ring-1 ring-indigo-400' 
+                      : 'bg-slate-800/50 text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-slate-700/50'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <Zap className="w-3.5 h-3.5" /> Design Concept
+              </label>
+              <select
+                value={state.style}
+                onChange={(e) => setState({ ...state, style: e.target.value })}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
+              >
+                {Object.values(DesignStyle).map((style) => (
+                  <option key={style} value={style}>{style}</option>
+                ))}
+              </select>
+            </section>
+
+            <section className="space-y-3">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <Layers className="w-3.5 h-3.5" /> Core Material
+              </label>
+              <div className="grid grid-cols-1 gap-1.5">
+                {Object.values(MaterialType).map((mat) => (
+                  <button
+                    key={mat}
+                    onClick={() => setState({ ...state, material: mat })}
+                    className={`text-left px-3 py-2 rounded-lg text-sm transition-all border ${
+                      state.material === mat 
+                      ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' 
+                      : 'border-slate-700/50 bg-slate-800/30 text-slate-400 hover:border-slate-600'
+                    }`}
+                  >
+                    {mat}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <Palette className="w-3.5 h-3.5" /> Color Scheme
+              </label>
+              <div className="flex gap-4">
+                <div className="flex-1 space-y-1.5">
+                  <span className="text-[10px] text-slate-500 uppercase font-bold">Primary</span>
+                  <div className="relative group h-10 w-full rounded-lg overflow-hidden border border-slate-700 bg-slate-800">
+                    <input 
+                      type="color" 
+                      value={state.mainColor} 
+                      onChange={(e) => setState({...state, mainColor: e.target.value})}
+                      className="absolute inset-0 w-full h-full cursor-pointer opacity-0"
+                    />
+                    <div className="w-full h-full" style={{ backgroundColor: state.mainColor }} />
+                  </div>
+                </div>
+                <div className="flex-1 space-y-1.5">
+                  <span className="text-[10px] text-slate-500 uppercase font-bold">Accent</span>
+                  <div className="relative group h-10 w-full rounded-lg overflow-hidden border border-slate-700 bg-slate-800">
+                    <input 
+                      type="color" 
+                      value={state.accentColor} 
+                      onChange={(e) => setState({...state, accentColor: e.target.value})}
+                      className="absolute inset-0 w-full h-full cursor-pointer opacity-0"
+                    />
+                    <div className="w-full h-full" style={{ backgroundColor: state.accentColor }} />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <ImageIcon className="w-3.5 h-3.5" /> Showcase Environment
+              </label>
+              <select
+                value={state.scenario}
+                onChange={(e) => setState({ ...state, scenario: e.target.value })}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
+              >
+                {Object.values(Scenario).map((scen) => (
+                  <option key={scen} value={scen}>{scen}</option>
+                ))}
+              </select>
+            </section>
+          </div>
+
+          <div className="p-6 sticky bottom-0 bg-slate-900 border-t border-slate-800 shadow-[0_-10px_20px_rgba(0,0,0,0.3)]">
+            <button
+              onClick={onGenerate}
+              disabled={isLoading}
+              className={`w-full py-4 px-6 rounded-xl font-bold flex items-center justify-center gap-2 transition-all duration-300 transform active:scale-95 ${
+                isLoading 
+                ? 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-50' 
+                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-xl shadow-indigo-900/40 hover:-translate-y-0.5'
+              }`}
+            >
+              {isLoading ? (
+                <div className="w-5 h-5 border-2 border-slate-400 border-t-white rounded-full animate-spin" />
+              ) : (
+                <>
+                  <Sparkles className="w-5 h-5" />
+                  Apply AI Design
+                </>
+              )}
+            </button>
+          </div>
+        </aside>
+      );
+    };
+
+    const Canvas = ({ imageUrl, keypoints, showPoints, isAnalyzing }) => {
+      if (!imageUrl) {
+        return (
+          <div className="flex-1 flex flex-col items-center justify-center p-12 text-slate-500 border-2 border-dashed border-slate-800 m-8 rounded-3xl bg-slate-900/20 backdrop-blur-sm">
+            <div className="w-24 h-24 bg-slate-800/40 rounded-full flex items-center justify-center mb-6 shadow-inner">
+              <Upload className="w-10 h-10 text-slate-600" />
+            </div>
+            <p className="text-xl font-semibold text-slate-300">No Image Uploaded</p>
+            <p className="text-sm mt-2 text-slate-500 max-w-xs text-center">Upload a photo of any protective gear to begin the AI-driven transformation process.</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex-1 relative flex items-center justify-center p-8 overflow-hidden group">
+          <div className="relative max-w-full max-h-full rounded-2xl shadow-[0_32px_64px_-16px_rgba(0,0,0,0.6)] overflow-hidden border border-slate-800 bg-slate-900/50">
+            <img 
+              src={imageUrl} 
+              alt="Design Preview" 
+              className="max-w-full max-h-[70vh] object-contain transition-all duration-700 block"
+            />
+            
+            {showPoints && !isAnalyzing && keypoints.map((kp, i) => (
+              <div
+                key={i}
+                className="absolute -translate-x-1/2 -translate-y-1/2 group/kp z-10"
+                style={{ left: `${kp.x * 100}%`, top: `${kp.y * 100}%` }}
+              >
+                <div className={`w-3.5 h-3.5 rounded-full border-2 border-white shadow-xl animate-pulse transition-transform hover:scale-125 cursor-pointer ${
+                  kp.type === 'joint' ? 'bg-orange-500' : kp.type === 'strap' ? 'bg-indigo-500' : 'bg-emerald-500'
+                }`} />
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 opacity-0 group-hover/kp:opacity-100 transition-all duration-200 bg-slate-900/95 text-[10px] font-bold text-white py-1.5 px-3 rounded-md whitespace-nowrap backdrop-blur-md border border-slate-700 shadow-2xl pointer-events-none translate-y-2 group-hover/kp:translate-y-0">
+                  {kp.label}
+                </div>
+              </div>
+            ))}
+
+            {!isAnalyzing && showPoints && (
+              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 px-4 py-2 bg-slate-950/70 backdrop-blur-xl border border-white/10 rounded-full shadow-2xl z-20">
+                  <span className="flex items-center gap-1.5 text-[10px] font-bold tracking-tight text-slate-300">
+                      <div className="w-2 h-2 rounded-full bg-orange-500" /> Joint Points
+                  </span>
+                  <div className="w-px h-3 bg-white/10 my-auto" />
+                  <span className="flex items-center gap-1.5 text-[10px] font-bold tracking-tight text-slate-300">
+                      <div className="w-2 h-2 rounded-full bg-indigo-500" /> Strap Layout
+                  </span>
+                  <div className="w-px h-3 bg-white/10 my-auto" />
+                  <span className="flex items-center gap-1.5 text-[10px] font-bold tracking-tight text-slate-300">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500" /> Protection Zones
+                  </span>
+              </div>
+            )}
+            
+            {isAnalyzing && (
+              <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center z-30">
+                <div className="flex flex-col items-center gap-4">
+                  <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin shadow-lg" />
+                  <span className="text-xs font-bold text-white tracking-widest bg-indigo-600 px-4 py-1 rounded-full shadow-xl">AI STRUCTURAL SCAN...</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const App = () => {
+      const [designState, setDesignState] = useState({
+        category: GearCategory.KNEE,
+        style: DesignStyle.PROFESSIONAL,
+        material: MaterialType.ELASTIC_MESH,
+        scenario: Scenario.STUDIO,
+        mainColor: '#4f46e5',
+        accentColor: '#fbbf24'
+      });
+      const [originalImage, setOriginalImage] = useState(null);
+      const [currentImage, setCurrentImage] = useState(null);
+      const [keypoints, setKeypoints] = useState([]);
+      const [variants, setVariants] = useState([]);
+      const [isProcessing, setIsProcessing] = useState(false);
+      const [isGenerating, setIsGenerating] = useState(false);
+      const [showAnalysis, setShowAnalysis] = useState(true);
+      const fileInputRef = useRef(null);
+
+      const handleFileUpload = async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const dataUrl = e.target?.result;
+          const base64 = dataUrl.split(',')[1];
+          setOriginalImage(dataUrl);
+          setCurrentImage(dataUrl);
+          setIsProcessing(true);
+          setKeypoints([]);
+
+          try {
+            const result = await analyzeGearImage(base64);
+            setKeypoints(result.keypoints);
+            const detectedCat = Object.values(GearCategory).find(c => 
+                c.toLowerCase() === result.category.toLowerCase() || 
+                result.category.toLowerCase().includes(c.toLowerCase())
+            );
+            if (detectedCat) {
+              setDesignState(prev => ({ ...prev, category: detectedCat }));
+            }
+          } catch (error) {
+            console.error("AI Analysis failed:", error);
+          } finally {
+            setIsProcessing(false);
+          }
+        };
+        reader.readAsDataURL(file);
+      };
+
+      const handleGenerate = async () => {
+        if (!originalImage) return;
+        setIsGenerating(true);
+        const base64 = originalImage.split(',')[1];
+        
+        try {
+          const newImageUrl = await generateDesignVariant(base64, designState);
+          if (newImageUrl) {
+            const newVariant = {
+              id: Date.now().toString(),
+              imageUrl: newImageUrl,
+              prompt: `New ${designState.style} ${designState.category}`,
+              timestamp: Date.now(),
+              config: { ...designState }
+            };
+            setCurrentImage(newImageUrl);
+            setVariants(prev => [newVariant, ...prev]);
+          }
+        } catch (error) {
+          console.error("Design Generation failed:", error);
+        } finally {
+          setIsGenerating(false);
+        }
+      };
+
+      const removeVariant = (e, id) => {
+        e.stopPropagation();
+        setVariants(prev => prev.filter(v => v.id !== id));
+        if (currentImage && variants.find(v => v.id === id)?.imageUrl === currentImage) {
+            setCurrentImage(originalImage);
+        }
+      };
+
+      return (
+        <div className="flex h-screen bg-slate-950 overflow-hidden text-slate-200">
+          <Sidebar 
+            state={designState} 
+            setState={setDesignState} 
+            onGenerate={handleGenerate} 
+            isLoading={isGenerating} 
+          />
+
+          <div className="flex-1 flex flex-col relative">
+            <header className="h-16 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-8 z-20 shadow-lg">
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all ${originalImage ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}>
+                    {originalImage ? <CheckCircle2 className="w-4 h-4" /> : '1'}
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Import</span>
+                </div>
+                <ChevronRight className="w-4 h-4 text-slate-700" />
+                <div className="flex items-center gap-2">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all ${isProcessing ? 'bg-indigo-500/20 border-indigo-500 text-indigo-400 animate-pulse' : keypoints.length > 0 ? 'bg-indigo-500/10 border-indigo-500/50 text-indigo-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}>
+                    2
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Structural Analysis</span>
+                </div>
+                <ChevronRight className="w-4 h-4 text-slate-700" />
+                <div className="flex items-center gap-2">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all ${isGenerating ? 'bg-indigo-500/20 border-indigo-500 text-indigo-400 animate-pulse' : variants.length > 0 ? 'bg-indigo-500/10 border-indigo-500/50 text-indigo-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}>
+                    3
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-widest text-slate-400">AI Iteration</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleFileUpload} 
+                  className="hidden" 
+                  accept="image/*" 
+                />
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs transition-all shadow-lg active:scale-95 uppercase tracking-widest"
+                >
+                  <Upload className="w-4 h-4" />
+                  Upload Photo
+                </button>
+              </div>
+            </header>
+
+            <main className="flex-1 flex flex-col relative overflow-hidden bg-[radial-gradient(circle_at_50%_40%,_#1e293b_0%,_#0f172a_100%)]">
+              {currentImage && (
+                <div className="absolute top-6 left-6 z-30 flex flex-col gap-2">
+                    <button 
+                      onClick={() => setShowAnalysis(!showAnalysis)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-full text-[10px] font-black tracking-[0.1em] transition-all border shadow-2xl backdrop-blur-md ${
+                        showAnalysis 
+                        ? 'bg-indigo-600 border-indigo-400 text-white' 
+                        : 'bg-slate-900/60 border-slate-700 text-slate-400'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      {showAnalysis ? 'LAYERS VISIBLE' : 'VIEW ANALYSIS'}
+                    </button>
+                    {isProcessing && (
+                      <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 text-[10px] font-black tracking-[0.1em] backdrop-blur-md shadow-xl">
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                        AI SCANNING...
+                      </div>
+                    )}
+                </div>
+              )}
+
+              <Canvas 
+                imageUrl={currentImage} 
+                keypoints={keypoints} 
+                showPoints={showAnalysis} 
+                isAnalyzing={isProcessing}
+              />
+
+              {/* Variant Gallery */}
+              {(variants.length > 0 || originalImage) && (
+                <div className="h-48 bg-slate-900/90 backdrop-blur-2xl border-t border-slate-800 p-6 relative z-20 shadow-[0_-20px_50px_rgba(0,0,0,0.5)]">
+                  <div className="flex items-center justify-between mb-4 px-2">
+                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                      <History className="w-4 h-4" /> Iteration History
+                    </h3>
+                  </div>
+                  <div className="flex gap-5 overflow-x-auto pb-4 custom-scrollbar">
+                    {originalImage && (
+                        <button 
+                          onClick={() => setCurrentImage(originalImage)}
+                          className={`relative flex-shrink-0 w-28 h-28 rounded-xl overflow-hidden border-2 transition-all duration-300 group ${currentImage === originalImage ? 'border-indigo-500 scale-105 shadow-2xl ring-4 ring-indigo-500/20' : 'border-slate-800 hover:border-slate-600 opacity-60 hover:opacity-100'}`}
+                        >
+                          <img src={originalImage} className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Original</span>
+                          </div>
+                        </button>
+                    )}
+                    {variants.map((v) => (
+                      <div key={v.id} className="relative group flex-shrink-0">
+                        <button 
+                          onClick={() => {
+                            setCurrentImage(v.imageUrl);
+                            setDesignState(v.config);
+                          }}
+                          className={`w-28 h-28 rounded-xl overflow-hidden border-2 transition-all duration-300 ${currentImage === v.imageUrl ? 'border-indigo-500 scale-105 shadow-2xl ring-4 ring-indigo-500/20' : 'border-slate-800 hover:border-slate-600 opacity-80 hover:opacity-100'}`}
+                        >
+                          <img src={v.imageUrl} className="w-full h-full object-cover" />
+                        </button>
+                        <button 
+                          onClick={(e) => removeVariant(e, v.id)}
+                          className="absolute -top-2 -right-2 p-1.5 bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition-all hover:scale-110 shadow-lg border border-red-400 z-10"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </main>
+          </div>
+
+          {/* AI Generation Overlay */}
+          {isGenerating && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/90 backdrop-blur-md">
+                <div className="bg-slate-900 border border-slate-800 p-10 rounded-[2.5rem] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.8)] max-w-md w-full text-center space-y-6 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-slate-800 overflow-hidden">
+                        <div className="h-full bg-indigo-500 animate-loading-bar" style={{ width: '40%' }} />
+                    </div>
+                    <div className="w-20 h-20 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto shadow-inner border border-indigo-500/30">
+                        <Sparkles className="w-10 h-10 text-indigo-400 animate-pulse" />
+                    </div>
+                    <div>
+                        <h3 className="text-2xl font-black text-white tracking-tight">AI Generative Phase</h3>
+                        <p className="text-slate-400 text-sm mt-3 leading-relaxed">
+                            Synthesizing <span className="text-indigo-400 font-bold">{designState.material}</span> textures and applying <span className="text-indigo-400 font-bold">{designState.style}</span> logic to your <span className="text-indigo-400 font-bold">{designState.category}</span>.
+                        </p>
+                    </div>
+                    <div className="pt-4 flex flex-col items-center gap-2">
+                        <div className="flex gap-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce [animation-delay:-0.3s]" />
+                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce [animation-delay:-0.15s]" />
+                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" />
+                        </div>
+                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em]">Processing Output</span>
+                    </div>
+                </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

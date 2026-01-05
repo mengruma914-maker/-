@@ -1,0 +1,7 @@
+{
+  "name": "Copy of GuardAI - Smart Protective Gear Designer",
+  "description": "An AI-powered professional design suite for sports and medical protective gear, featuring automated preprocessing, material matching, and intelligent design generation.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
